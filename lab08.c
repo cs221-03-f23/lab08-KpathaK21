@@ -10,6 +10,7 @@
 
 volatile sig_atomic_t stop_server = 0;
 
+// Signal handler
 void handle_signal(int signal) {
   if (signal == SIGINT) {
     printf("Server shutting down...\n");
@@ -17,14 +18,15 @@ void handle_signal(int signal) {
   }
 }
 
+// Function prototypes
 int read_port_from_file();
-
 int create_socket(int port);
 void bind_socket(int sockfd, int port);
 void listen_for_connections(int sockfd);
 int accept_connection(int sockfd);
 void handle_client(int client_socket);
 
+// HTTP handling functions
 void handle_http_request(int client_socket);
 void send_success_response(int client_socket);
 void send_error_response(int client_socket, int status_code,
@@ -33,24 +35,30 @@ void send_response(int client_socket, int status_code, const char *status_text,
                    const char *content_type, const char *body);
 
 int main(int argc, char *argv[]) {
-
+  // Set up signal handler for graceful shutdown
   signal(SIGINT, handle_signal);
+
+  // Read port number from a file
   int port = read_port_from_file();
 
+  // Create and configure the server socket
   int sockfd = create_socket(port);
   bind_socket(sockfd, port);
   listen_for_connections(sockfd);
 
-  while (1) {
+  // Server main loop
+  while (!stop_server) {
     int client_socket = accept_connection(sockfd);
     handle_client(client_socket);
   }
 
+  // Close the server socket
   close(sockfd);
 
   return 0;
 }
 
+// Read the port number from a file
 int read_port_from_file() {
   FILE *file = fopen("port.txt", "r");
   if (file == NULL) {
@@ -65,6 +73,7 @@ int read_port_from_file() {
   return port;
 }
 
+// Create a socket
 int create_socket(int port) {
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
   if (sockfd == -1) {
@@ -74,6 +83,7 @@ int create_socket(int port) {
   return sockfd;
 }
 
+// Bind a socket to a specific port
 void bind_socket(int sockfd, int port) {
   struct sockaddr_in addr;
   addr.sin_family = AF_INET;
@@ -87,6 +97,7 @@ void bind_socket(int sockfd, int port) {
   }
 }
 
+// Listen for incoming connections
 void listen_for_connections(int sockfd) {
   if (listen(sockfd, 3) == -1) {
     perror("listen");
@@ -95,6 +106,7 @@ void listen_for_connections(int sockfd) {
   }
 }
 
+// Accept an incoming connection
 int accept_connection(int sockfd) {
   struct sockaddr_in client_addr;
   socklen_t client_addrlen = sizeof(client_addr);
@@ -110,8 +122,13 @@ int accept_connection(int sockfd) {
   return client_socket;
 }
 
-void handle_client(int client_socket) { handle_http_request(client_socket); }
+// Handle a client connection
+void handle_client(int client_socket) {
+  // Handle HTTP request for the client
+  handle_http_request(client_socket);
+}
 
+// Handle an HTTP request from a client
 void handle_http_request(int client_socket) {
   char buffer[MAX_BUFFER_SIZE];
 
@@ -136,7 +153,6 @@ void handle_http_request(int client_socket) {
                           "Only GET method is allowed");
       return;
     }
-
     // Ensure the URI is "/"
     if (strcmp(uri, "/") != 0) {
       send_error_response(client_socket, 404, "Not Found",
@@ -144,8 +160,6 @@ void handle_http_request(int client_socket) {
       return;
     }
 
-    // Respond with a successful response
-    printf("HTTP request sent, awaiting response... 200 OK\n");
     send_success_response(client_socket);
     break;
   }
@@ -155,21 +169,24 @@ void handle_http_request(int client_socket) {
   }
 
   // Print a message indicating the connection is closed
-  printf("Connection closed by foreign host.\n");
+  // printf("Connection closed by foreign host.\n");
   close(client_socket);
 }
 
 void send_success_response(int client_socket) {
   const char *response_body =
-      "<!DOCTYPE html>\n<html>\n<body>\nHello CS 221\n</body>\n</html>";
-  send_response(client_socket, 200, "OK", "text/html", response_body);
+      "<!DOCTYPE html>\n<html>\n<body>\nHello CS 221\n</body>\n</html>\n\n";
+
+  send_response(client_socket, 200, "OK", "text/plain", response_body);
 }
 
 void send_error_response(int client_socket, int status_code,
                          const char *status_text, const char *error_message) {
   const char *response_body =
-      "<!DOCTYPE html>\n<html>\n<body>\nNot found\n</body>\n</html>";
-  send_response(client_socket, status_code, status_text, "text/html",
+      "<!DOCTYPE html>\n<html>\n<body>\nNot "
+      "found\n</body>\n</html>\n\nConnection closed by foreign host.\n";
+
+  send_response(client_socket, status_code, status_text, "text/plain\n\n",
                 response_body);
 }
 
