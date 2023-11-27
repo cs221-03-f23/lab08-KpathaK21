@@ -1,4 +1,6 @@
+#include <fcntl.h>
 #include <netdb.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -6,9 +8,6 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <poll.h>
-
 
 #define MAX_BUFFER_SIZE 1024
 
@@ -45,40 +44,27 @@ int main(int argc, char *argv[]) {
   // Read port number from a file
   int port = read_port_from_file();
 
+  // Create and configure the server socket
+  int sockfd = create_socket(port);
+  bind_socket(sockfd, port);
+  listen_for_connections(sockfd);
 
-// Create and configure the server socket
-    int sockfd = create_socket(port);
-    bind_socket(sockfd, port);
-    listen_for_connections(sockfd);
-   
-    
-   // Server main loop
-    struct pollfd fds[1];
-    //memset(fds, 0, sizeof(fds));
-    fds[0].fd = sockfd;
-    fds[0].events = POLLIN;
+  // Server main loop
+  struct pollfd fds[1];
+  fds[0].fd = sockfd;
+  fds[0].events = POLLIN;
 
-    
   // Server main loop
   while (!stop_server) {
-   int poll_result = poll(fds, 1, -1);
+    int client_socket = accept_connection(sockfd);
+    if (client_socket != -1) {
+      // Make the client socket non-blocking
+      int flags = fcntl(client_socket, F_GETFL, 0);
+      fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
 
-        if (poll_result == -1) {
-            perror("poll");
-            break;
-        }
-
-      if (fds[0].revents & POLLIN) {
-            int client_socket = accept_connection(sockfd);
-            if (client_socket != -1) {
-                // Make the client socket non-blocking
-                int flags = fcntl(client_socket, F_GETFL, 0);
-                fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
-
-                handle_client(client_socket);
-            }
-        }
+      handle_client(client_socket);
     }
+  }
 
   // Close the server socket
   close(sockfd);
@@ -137,32 +123,33 @@ void listen_for_connections(int sockfd) {
 // Accept an incoming connection
 int accept_connection(int sockfd) {
   struct sockaddr_in client_addr;
-    socklen_t client_addrlen = sizeof(client_addr);
+  socklen_t client_addrlen = sizeof(client_addr);
 
-    struct pollfd poll_fd;
-    poll_fd.fd = sockfd;
-    poll_fd.events = POLLIN;
+  struct pollfd poll_fd;
+  poll_fd.fd = sockfd;
+  poll_fd.events = POLLIN;
 
-    int poll_result = poll(&poll_fd, 1, -1);
+  int poll_result = poll(&poll_fd, 1, 0);
 
-    if (poll_result == -1) {
-        perror("poll");
-        return -1;
+  if (poll_result == -1) {
+    perror("poll");
+    return -1;
+  }
+
+  if (poll_fd.revents & POLLIN) {
+    int client_socket =
+        accept(sockfd, (struct sockaddr *)&client_addr, &client_addrlen);
+
+    if (client_socket == -1) {
+      perror("accept");
+      return -1;
     }
-    if (poll_fd.revents & POLLIN) {
-        int client_socket = accept(sockfd, (struct sockaddr *)&client_addr, &client_addrlen);
 
-        if (client_socket == -1) {
-            perror("accept");
-            return -1;
-        }
+    return client_socket;
+  }
 
-        return client_socket;
-    }
-
-    return -1;  // No incoming connection
+  return -1; // No incoming connection
 }
-
 
 // Handle a client connection
 void handle_client(int client_socket) {
@@ -170,7 +157,7 @@ void handle_client(int client_socket) {
   handle_http_request(client_socket);
 
   // Close the client socket
-      close(client_socket);
+  close(client_socket);
 }
 
 // Handle an HTTP request from a client
@@ -181,7 +168,6 @@ void handle_http_request(int client_socket) {
   ssize_t recv_val;
   while ((recv_val = recv(client_socket, buffer, MAX_BUFFER_SIZE - 1, 0)) > 0) {
     buffer[recv_val] = '\0'; // Null-terminate the received data
-                             // printf("Received HTTP Request:\n%s", buffer);
 
     // Parse the request line
     char method[MAX_BUFFER_SIZE];
@@ -213,23 +199,20 @@ void handle_http_request(int client_socket) {
     perror("recv");
   }
 
-  // Print a message indicating the connection is closed
-  // printf("Connection closed by foreign host.\n");
   close(client_socket);
 }
 
 void send_success_response(int client_socket) {
-  const char *response_body =
-      "<!DOCTYPE html>\n<html>\n<body>\nHello CS 221\n</body>\n</html>\n\n";
+  const char *response_body = "<!DOCTYPE html>\n<html>\n  <body>\n    Hello CS "
+                              "221\n  </body>\n</html>\n";
 
   send_response(client_socket, 200, "OK", "text/plain", response_body);
 }
 
 void send_error_response(int client_socket, int status_code,
                          const char *status_text, const char *error_message) {
-  const char *response_body =
-      "<!DOCTYPE html>\n<html>\n<body>\nNot "
-      "found\n</body>\n</html>\n\nConnection closed by foreign host.\n";
+  const char *response_body = "<!DOCTYPE html>\n<html>\n<body>\nNot "
+                              "found\n</body>\n</html>\n";
 
   send_response(client_socket, status_code, status_text, "text/plain\n\n",
                 response_body);
