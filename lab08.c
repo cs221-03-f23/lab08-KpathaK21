@@ -4,7 +4,11 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
+#include <fcntl.h>
+#include <poll.h>
+
 
 #define MAX_BUFFER_SIZE 1024
 
@@ -41,16 +45,40 @@ int main(int argc, char *argv[]) {
   // Read port number from a file
   int port = read_port_from_file();
 
-  // Create and configure the server socket
-  int sockfd = create_socket(port);
-  bind_socket(sockfd, port);
-  listen_for_connections(sockfd);
 
+// Create and configure the server socket
+    int sockfd = create_socket(port);
+    bind_socket(sockfd, port);
+    listen_for_connections(sockfd);
+   
+    
+   // Server main loop
+    struct pollfd fds[1];
+    //memset(fds, 0, sizeof(fds));
+    fds[0].fd = sockfd;
+    fds[0].events = POLLIN;
+
+    
   // Server main loop
   while (!stop_server) {
-    int client_socket = accept_connection(sockfd);
-    handle_client(client_socket);
-  }
+   int poll_result = poll(fds, 1, -1);
+
+        if (poll_result == -1) {
+            perror("poll");
+            break;
+        }
+
+      if (fds[0].revents & POLLIN) {
+            int client_socket = accept_connection(sockfd);
+            if (client_socket != -1) {
+                // Make the client socket non-blocking
+                int flags = fcntl(client_socket, F_GETFL, 0);
+                fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
+
+                handle_client(client_socket);
+            }
+        }
+    }
 
   // Close the server socket
   close(sockfd);
@@ -109,23 +137,40 @@ void listen_for_connections(int sockfd) {
 // Accept an incoming connection
 int accept_connection(int sockfd) {
   struct sockaddr_in client_addr;
-  socklen_t client_addrlen = sizeof(client_addr);
-  int client_socket =
-      accept(sockfd, (struct sockaddr *)&client_addr, &client_addrlen);
+    socklen_t client_addrlen = sizeof(client_addr);
 
-  if (client_socket == -1) {
-    perror("accept");
-    close(sockfd);
-    exit(EXIT_FAILURE);
-  }
+    struct pollfd poll_fd;
+    poll_fd.fd = sockfd;
+    poll_fd.events = POLLIN;
 
-  return client_socket;
+    int poll_result = poll(&poll_fd, 1, -1);
+
+    if (poll_result == -1) {
+        perror("poll");
+        return -1;
+    }
+    if (poll_fd.revents & POLLIN) {
+        int client_socket = accept(sockfd, (struct sockaddr *)&client_addr, &client_addrlen);
+
+        if (client_socket == -1) {
+            perror("accept");
+            return -1;
+        }
+
+        return client_socket;
+    }
+
+    return -1;  // No incoming connection
 }
+
 
 // Handle a client connection
 void handle_client(int client_socket) {
   // Handle HTTP request for the client
   handle_http_request(client_socket);
+
+  // Close the client socket
+      close(client_socket);
 }
 
 // Handle an HTTP request from a client
